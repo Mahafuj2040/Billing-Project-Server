@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const puppeteer = require('puppeteer'); // Puppeteer for generating PDF
+const puppeteer = require('puppeteer');
 require('dotenv').config();
 
 const app = express();
@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB connection
+// MongoDB connection URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.d3z2xp4.mongodb.net/`;
 
 const client = new MongoClient(uri, {
@@ -24,18 +24,18 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+    await client.connect();
+
     const database = client.db("groceryStore");
     const productsCollection = database.collection("products");
 
-    // READ: Get all products (supports search only)
+    // GET all products, supports search by name
     app.get('/api/products', async (req, res) => {
       const { search } = req.query;
       const query = {};
-
       if (search) {
         query.name = { $regex: search, $options: 'i' };
       }
-
       try {
         const products = await productsCollection.find(query).toArray();
         res.json(products);
@@ -45,7 +45,7 @@ async function run() {
       }
     });
 
-    // READ: Get a single product by ID
+    // GET single product by ID
     app.get('/api/products/:id', async (req, res) => {
       const { id } = req.params;
       try {
@@ -56,7 +56,7 @@ async function run() {
       }
     });
 
-    // CREATE: Add a new product
+    // POST new product
     app.post('/api/products', async (req, res) => {
       const newProduct = req.body;
       try {
@@ -67,11 +67,10 @@ async function run() {
       }
     });
 
-    // UPDATE: Modify a product by ID
+    // PUT update product by ID
     app.put('/api/products/:id', async (req, res) => {
       const { id } = req.params;
       const updatedProduct = req.body;
-
       try {
         const result = await productsCollection.updateOne(
           { _id: new ObjectId(id) },
@@ -83,7 +82,7 @@ async function run() {
       }
     });
 
-    // DELETE: Remove a product by ID
+    // DELETE product by ID
     app.delete('/api/products/:id', async (req, res) => {
       const { id } = req.params;
       try {
@@ -94,7 +93,7 @@ async function run() {
       }
     });
 
-    // ✅ Generate PDF receipt from cart
+    // POST generate PDF receipt from cart
     app.post('/api/generate-receipt', async (req, res) => {
       const cart = req.body.cart;
 
@@ -146,11 +145,13 @@ async function run() {
       `;
 
       try {
-        const browser = await puppeteer.launch();
+        const browser = await puppeteer.launch({
+          headless: true,
+          args: ['--no-sandbox', '--disable-setuid-sandbox']
+        });
         const page = await browser.newPage();
-        await page.setContent(html);
+        await page.setContent(html, { waitUntil: 'networkidle0' });
         const pdfBuffer = await page.pdf({ format: 'A4' });
-
         await browser.close();
 
         res.set({
@@ -173,7 +174,7 @@ async function run() {
 
 run().catch(console.dir);
 
-// Default route
+// Default root route
 app.get('/', (req, res) => {
   res.send('billcraft running');
 });
