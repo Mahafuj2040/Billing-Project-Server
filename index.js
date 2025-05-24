@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-const puppeteer = require('puppeteer');
+const PDFDocument = require('pdfkit');
 require('dotenv').config();
 
 const app = express();
@@ -93,7 +93,7 @@ async function run() {
       }
     });
 
-    // POST generate PDF receipt from cart
+    // POST generate PDF receipt using PDFKit
     app.post('/api/generate-receipt', async (req, res) => {
       const cart = req.body.cart;
 
@@ -101,69 +101,49 @@ async function run() {
         return res.status(400).send('Cart is empty');
       }
 
+      const doc = new PDFDocument();
+      let buffers = [];
       let subtotal = 0;
-      const rows = cart.map(item => {
-        const itemTotal = item.price * item.quantity;
-        subtotal += itemTotal;
-        return `
-          <tr>
-            <td>${item.name}</td>
-            <td>${item.quantity}</td>
-            <td>৳${item.price.toFixed(2)}</td>
-            <td>৳${itemTotal.toFixed(2)}</td>
-          </tr>
-        `;
-      }).join('');
 
+      doc.on('data', buffers.push.bind(buffers));
+      doc.on('end', () => {
+        const pdfData = Buffer.concat(buffers);
+        res.set({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'attachment; filename="receipt.pdf"',
+          'Content-Length': pdfData.length
+        });
+        res.send(pdfData);
+      });
+
+      // Header
+      doc.fontSize(20).text('BillCraft Receipt', { align: 'center' });
+      doc.moveDown();
+
+      // Date
       const currentDate = new Date().toLocaleString('bn-BD', {
         year: 'numeric', month: 'long', day: 'numeric',
         hour: '2-digit', minute: '2-digit'
       });
+      doc.fontSize(12).text(`Date: ${currentDate}`);
+      doc.moveDown();
 
-      const html = `
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-            h2 { text-align: center; }
-          </style>
-        </head>
-        <body>
-          <h2>BillCraft Receipt</h2>
-          <p><strong>Date:</strong> ${currentDate}</p>
-          <table>
-            <thead>
-              <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-          <h3 style="text-align:right;">Subtotal: ৳${subtotal.toFixed(2)}</h3>
-        </body>
-        </html>
-      `;
+      // Table header
+      doc.fontSize(14).text('Item\t\tQty\tPrice\tTotal', { underline: true });
 
-      try {
-        const browser = await puppeteer.launch({
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox']
-        });
-        const page = await browser.newPage();
-        await page.setContent(html, { waitUntil: 'networkidle0' });
-        const pdfBuffer = await page.pdf({ format: 'A4' });
-        await browser.close();
+      // Table rows
+      cart.forEach(item => {
+        const itemTotal = item.price * item.quantity;
+        subtotal += itemTotal;
+        doc.fontSize(12).text(
+          `${item.name}\t\t${item.quantity}\t৳${item.price.toFixed(2)}\t৳${itemTotal.toFixed(2)}`
+        );
+      });
 
-        res.set({
-          'Content-Type': 'application/pdf',
-          'Content-Disposition': 'attachment; filename="receipt.pdf"',
-          'Content-Length': pdfBuffer.length
-        });
-        res.send(pdfBuffer);
-      } catch (err) {
-        console.error('PDF generation error:', err);
-        res.status(500).send('Failed to generate PDF');
-      }
+      doc.moveDown();
+      doc.fontSize(14).text(`Subtotal: ৳${subtotal.toFixed(2)}`, { align: 'right' });
+
+      doc.end();
     });
 
     console.log("Connected to MongoDB and API routes are ready.");
