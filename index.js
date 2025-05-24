@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const puppeteer = require('puppeteer'); // Puppeteer for generating PDF
 require('dotenv').config();
 
 const app = express();
@@ -32,7 +33,7 @@ async function run() {
       const query = {};
 
       if (search) {
-        query.name = { $regex: search, $options: 'i' }; // case-insensitive name search
+        query.name = { $regex: search, $options: 'i' };
       }
 
       try {
@@ -90,6 +91,77 @@ async function run() {
         res.json(result);
       } catch (error) {
         res.status(500).json({ error: 'Failed to delete product' });
+      }
+    });
+
+    // ✅ Generate PDF receipt from cart
+    app.post('/api/generate-receipt', async (req, res) => {
+      const cart = req.body.cart;
+
+      if (!cart || cart.length === 0) {
+        return res.status(400).send('Cart is empty');
+      }
+
+      let subtotal = 0;
+      const rows = cart.map(item => {
+        const itemTotal = item.price * item.quantity;
+        subtotal += itemTotal;
+        return `
+          <tr>
+            <td>${item.name}</td>
+            <td>${item.quantity}</td>
+            <td>৳${item.price.toFixed(2)}</td>
+            <td>৳${itemTotal.toFixed(2)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const currentDate = new Date().toLocaleString('bn-BD', {
+        year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+
+      const html = `
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 20px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+            h2 { text-align: center; }
+          </style>
+        </head>
+        <body>
+          <h2>BillCraft Receipt</h2>
+          <p><strong>Date:</strong> ${currentDate}</p>
+          <table>
+            <thead>
+              <tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <h3 style="text-align:right;">Subtotal: ৳${subtotal.toFixed(2)}</h3>
+        </body>
+        </html>
+      `;
+
+      try {
+        const browser = await puppeteer.launch();
+        const page = await browser.newPage();
+        await page.setContent(html);
+        const pdfBuffer = await page.pdf({ format: 'A4' });
+
+        await browser.close();
+
+        res.set({
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': 'attachment; filename="receipt.pdf"',
+          'Content-Length': pdfBuffer.length
+        });
+        res.send(pdfBuffer);
+      } catch (err) {
+        console.error('PDF generation error:', err);
+        res.status(500).send('Failed to generate PDF');
       }
     });
 
